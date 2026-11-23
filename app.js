@@ -13,12 +13,12 @@ $("loginTab").onclick=()=>setAuthMode("login");
 $("registerTab").onclick=()=>setAuthMode("register");
 $("authForm").addEventListener("submit",async e=>{e.preventDefault();try{let email=$("email").value.trim(),password=$("password").value;if(authMode==="register"){let selected=document.querySelector('input[name="role"]:checked').value;let c=await createUserWithEmailAndPassword(auth,email,password);await setDoc(doc(db,"users",c.user.uid),{email,role:selected,createdAt:serverTimestamp()});role=selected;await loadProfile(c.user);}else await signInWithEmailAndPassword(auth,email,password);}catch(err){msg("Erro de acesso: "+err.message)}});
 $("logout").onclick=()=>signOut(auth);$("sideLogout").onclick=()=>signOut(auth);
-async function loadProfile(u){try{let p=await getDoc(doc(db,"users",u.uid));role=p.data()?.role;if(!role){msg("Perfil não encontrado. Verifique o cadastro no Firestore.");return;}$("loginRole").value=role==="prestador"?"Prestador de fretes":"Contratante";$("identity").textContent=u.email+" — "+role;document.querySelector('[data-view="publicar"]').hidden=role!=="contratante";document.querySelector('[data-view="veiculos"]').hidden=role!=="prestador";await loadProfessionalProfile();$("headerRole").textContent=role==="contratante"?"Contratante":"Prestador";
+async function loadProfile(u){try{let p=await getDoc(doc(db,"users",u.uid));role=p.data()?.role;if(!role){msg("Perfil não encontrado. Verifique o cadastro no Firestore.");return;}$("loginRole").value=role==="prestador"?"Prestador de fretes":"Contratante";$("headerIdentity").textContent=u.email+" · "+(role==="contratante"?"Contratante":"Prestador");$("headerIdentity").hidden=false;document.querySelector('[data-view="publicar"]').hidden=role!=="contratante";document.querySelector('[data-view="veiculos"]').hidden=role!=="prestador";await loadProfessionalProfile();$("headerRole").textContent=role==="contratante"?"Contratante":"Prestador";
 $("homePublish").hidden=role!=="contratante";
 document.querySelectorAll(".only-contractor").forEach(el=>el.hidden=role!=="contratante");
 document.querySelectorAll(".only-provider").forEach(el=>el.hidden=role!=="prestador");
 document.querySelector('[data-view="inicio"]').click();}catch(e){msg(e.message)}}
-onAuthStateChanged(auth,async u=>{user=u;$("auth").hidden=!!u;$("workspace").hidden=!u;$("logout").hidden=!u;if(!u){role=null;profileForm.reset();$("loginRole").value="Identificado após entrar";return;}await loadProfile(u);});
+onAuthStateChanged(auth,async u=>{user=u;$("auth").hidden=!!u;$("workspace").hidden=!u;$("logout").hidden=!u;if(!u){role=null;$("headerIdentity").hidden=true;profileForm.reset();$("loginRole").value="Identificado após entrar";return;}await loadProfile(u);});
 for(const uf of "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split(" ")){const option=document.createElement("option");option.value=uf;option.textContent=uf;$("profileUF").append(option);}
 const profileFields=["responsavel","empresa","documento","telefone","emergenciaNome","emergenciaTelefone","cep","uf","cidade","bairro","logradouro","numero","complemento","grupoWhatsapp","observacoes"];
 const profileForm=$("profileForm");
@@ -27,12 +27,53 @@ async function loadProfessionalProfile(){
  try{
   const snap=await getDoc(doc(db,"professionalProfiles",user.uid));
   const data=snap.exists()?snap.data():{};
-  for(const name of profileFields){const el=profileForm.elements.namedItem(name);if(el)el.value=data[name]??"";}
+  for(const name of profileFields){const el=profileForm.elements.namedItem(name);if(el)el.value=["telefone","emergenciaTelefone"].includes(name)?phoneMask(data[name]??""):(data[name]??"");}
   $("companyNameField").hidden=role!=="contratante";
   $("documentLabel").querySelector("input").placeholder=role==="contratante"?"CNPJ (opcional)":"CPF (opcional)";
   $("profileStatus").textContent=snap.exists()?"Perfil carregado.":"Complete seu perfil profissional.";
  }catch(err){$("profileStatus").textContent="Erro ao carregar perfil: "+err.message;}
 }
+
+function phoneMask(value){
+ const v=String(value||"").replace(/\D/g,"").slice(0,11);
+ if(v.length<=2)return v.length?"("+v:"";
+ if(v.length<=6)return "("+v.slice(0,2)+") "+v.slice(2);
+ if(v.length<=10)return "("+v.slice(0,2)+") "+v.slice(2,6)+"-"+v.slice(6);
+ return "("+v.slice(0,2)+") "+v.slice(2,7)+"-"+v.slice(7);
+}
+for(const name of ["telefone","emergenciaTelefone"]){
+ const field=profileForm.elements.namedItem(name);
+ field.addEventListener("input",()=>{field.value=phoneMask(field.value);});
+}
+const cepField=profileForm.elements.namedItem("cep");
+cepField.addEventListener("input",()=>{
+ const v=cepField.value.replace(/\D/g,"").slice(0,8);
+ cepField.value=v.length>5?v.slice(0,5)+"-"+v.slice(5):v;
+});
+let cepRequest=0;
+cepField.addEventListener("blur",async()=>{
+ const cep=cepField.value.replace(/\D/g,"");
+ if(cep.length!==8)return;
+ const request=++cepRequest;
+ $("profileStatus").textContent="Consultando CEP...";
+ try{
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),6500);
+  let response;
+  try{response=await fetch("https://viacep.com.br/ws/"+cep+"/json/",{signal:controller.signal});}
+  finally{clearTimeout(timeout);}
+  if(!response.ok)throw new Error("Serviço de CEP indisponível.");
+  const data=await response.json();
+  if(request!==cepRequest)return;
+  if(data.erro){$("profileStatus").textContent="CEP não encontrado. Preencha o endereço manualmente.";return;}
+  for(const [field,value] of Object.entries({uf:data.uf,cidade:data.localidade,bairro:data.bairro,logradouro:data.logradouro})){
+   const el=profileForm.elements.namedItem(field);
+   if(el&&value)el.value=value;
+  }
+  $("profileStatus").textContent="Endereço localizado pelo CEP. Confira número e complemento.";
+ }catch(e){if(request===cepRequest)$("profileStatus").textContent="Não foi possível consultar o CEP. Preencha manualmente.";}
+});
+
 profileForm.addEventListener("submit",async e=>{
  e.preventDefault();
  if(!user||!role)return;
@@ -105,6 +146,22 @@ for(const entry of display.slice(0,visibleFreights)){
  const detail=document.createElement("p");detail.textContent=[d.descricao,d.peso+" kg",d.carroceria,d.data].join(" · ");el.append(detail);
  const price=document.createElement("p");price.className="muted";price.textContent=d.valor!=null?"R$ "+Number(d.valor).toLocaleString("pt-BR",{minimumFractionDigits:2}):"Valor a negociar";el.append(price);
  if(status==="recusada"&&entry.application?.rejectionReason){const reason=document.createElement("p");reason.className="rejection-note";reason.textContent="Motivo da recusa: "+entry.application.rejectionReason;el.append(reason)}
+ if(role==="contratante"&&d.ownerId===user.uid&&d.status==="aberto"&&!entry.application){
+  const remove=document.createElement("button");
+  remove.type="button";remove.className="danger-outline";remove.textContent="Retirar anúncio";
+  remove.onclick=async()=>{
+   const hasApps=apps.docs.some(a=>a.data().freightId===f.id);
+   const explanation=hasApps?"Existem candidaturas vinculadas. O anúncio será retirado da lista, mas as candidaturas continuarão no histórico.":"O anúncio deixará de aparecer nos fretes disponíveis.";
+   if(!window.confirm("Retirar este frete?\n\n"+explanation+"\n\nEsta ação não pode ser desfeita."))return;
+   remove.disabled=true;
+   try{
+    await updateDoc(doc(db,"freights",f.id),{status:"cancelado"});
+    msg("Frete retirado dos anúncios disponíveis.");
+    await refresh();
+   }catch(err){msg("Erro ao retirar anúncio: "+err.message);remove.disabled=false;}
+  };
+  el.append(remove);
+ }
  if(role==="prestador"&&status==="novas"){
  const b=document.createElement("button");b.textContent="Candidatar-se";b.onclick=async()=>{b.disabled=true;b.textContent="Enviando candidatura...";try{await apply(f.id,d)}finally{if(b.isConnected){b.disabled=false;b.textContent="Candidatar-se"}}};el.append(b);
  }
