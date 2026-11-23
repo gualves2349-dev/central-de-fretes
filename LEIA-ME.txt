@@ -1,0 +1,18 @@
+CENTRAL DE FRETES — PROTÓTIPO V1
+
+1. Crie um projeto Firebase separado do LeadRadar.
+2. Ative Authentication > Email/Password e crie o Firestore.
+3. Cadastre um app Web no Firebase e copie os campos para firebase-config.js.
+4. Publique o conteúdo desta pasta no GitHub Pages ou Firebase Hosting.
+5. Cole firestore.rules nas regras do Firestore e publique.
+6. Crie duas contas com e-mails distintos: contratante e prestador.
+7. Cadastre um veículo no prestador; publique uma carga no contratante; candidate-se e aceite.
+
+LIMITAÇÕES IMPORTANTES:
+- Protótipo inicial, não auditado para produção. Teste regras e fluxos em ambiente de desenvolvimento.
+- Não há busca externa, pagamento, notificações, verificação de documentos ou prevenção robusta de fraude.
+- A lista de fretes não filtra automaticamente pela compatibilidade; a validação básica ocorre na candidatura.
+- As regras atuais permitem candidaturas duplicadas por clientes maliciosos; a interface bloqueia duplicatas comuns.
+- Não há encerramento de anúncios nem gestão de vários papéis por conta nesta primeira entrega.
+- Não compartilhe dados sensíveis de placas; ficam no Firestore e só o proprietário pode lê-los pelas regras.
+- Consultas grandes precisarão de paginação e índices Firestore.

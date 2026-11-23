@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function signed() { return request.auth != null; }
+  function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role; }
+  match /users/{uid} {
+   allow create: if signed() && request.auth.uid == uid && request.resource.data.role in ['contratante','prestador'];
+   allow read: if signed() && request.auth.uid == uid;
+   allow update, delete: if false;
+  }
+  match /vehicles/{id} {
+   allow create: if signed() && profile() == 'prestador' && request.resource.data.ownerId == request.auth.uid && request.resource.data.capacidade > 0;
+   allow read: if signed() && resource.data.ownerId == request.auth.uid;
+   allow update, delete: if false;
+  }
+  match /freights/{id} {
+   allow read: if signed();
+   allow create: if signed() && profile() == 'contratante' && request.resource.data.ownerId == request.auth.uid && request.resource.data.status == 'aberto' && request.resource.data.peso > 0;
+   allow update, delete: if false;
+  }
+  match /applications/{id} {
+   allow create: if signed() && profile() == 'prestador' && request.resource.data.applicantId == request.auth.uid && request.resource.data.status == 'pendente' && exists(/databases/$(database)/documents/freights/$(request.resource.data.freightId)) && get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.ownerId == request.resource.data.ownerId && get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.status == 'aberto' && get(/databases/$(database)/documents/vehicles/$(request.resource.data.vehicleId)).data.ownerId == request.auth.uid && get(/databases/$(database)/documents/vehicles/$(request.resource.data.vehicleId)).data.capacidade >= get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.peso && (get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.carroceria == 'qualquer' || get(/databases/$(database)/documents/vehicles/$(request.resource.data.vehicleId)).data.carroceria == get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.carroceria);
+   allow read: if signed() && (resource.data.applicantId == request.auth.uid || resource.data.ownerId == request.auth.uid);
+   allow update: if signed() && resource.data.ownerId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) && request.resource.data.status in ['aceita','recusada'] && resource.data.status == 'pendente';
+   allow delete: if false;
+  }
+ }
+}
