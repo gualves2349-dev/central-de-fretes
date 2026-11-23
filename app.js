@@ -13,8 +13,37 @@ $("loginTab").onclick=()=>setAuthMode("login");
 $("registerTab").onclick=()=>setAuthMode("register");
 $("authForm").addEventListener("submit",async e=>{e.preventDefault();try{let email=$("email").value.trim(),password=$("password").value;if(authMode==="register"){let selected=document.querySelector('input[name="role"]:checked').value;let c=await createUserWithEmailAndPassword(auth,email,password);await setDoc(doc(db,"users",c.user.uid),{email,role:selected,createdAt:serverTimestamp()});role=selected;await loadProfile(c.user);}else await signInWithEmailAndPassword(auth,email,password);}catch(err){msg("Erro de acesso: "+err.message)}});
 $("logout").onclick=()=>signOut(auth);
-async function loadProfile(u){try{let p=await getDoc(doc(db,"users",u.uid));role=p.data()?.role;if(!role){msg("Perfil não encontrado. Verifique o cadastro no Firestore.");return;}$("loginRole").value=role==="prestador"?"Prestador de fretes":"Contratante";$("identity").textContent=u.email+" — "+role;document.querySelector('[data-view="publicar"]').hidden=role!=="contratante";document.querySelector('[data-view="veiculos"]').hidden=role!=="prestador";document.querySelector('[data-view="fretes"]').click();}catch(e){msg(e.message)}}
-onAuthStateChanged(auth,async u=>{user=u;$("auth").hidden=!!u;$("workspace").hidden=!u;$("logout").hidden=!u;if(!u){role=null;$("loginRole").value="Identificado após entrar";return;}await loadProfile(u);});
+async function loadProfile(u){try{let p=await getDoc(doc(db,"users",u.uid));role=p.data()?.role;if(!role){msg("Perfil não encontrado. Verifique o cadastro no Firestore.");return;}$("loginRole").value=role==="prestador"?"Prestador de fretes":"Contratante";$("identity").textContent=u.email+" — "+role;document.querySelector('[data-view="publicar"]').hidden=role!=="contratante";document.querySelector('[data-view="veiculos"]').hidden=role!=="prestador";await loadProfessionalProfile();document.querySelector('[data-view="fretes"]').click();}catch(e){msg(e.message)}}
+onAuthStateChanged(auth,async u=>{user=u;$("auth").hidden=!!u;$("workspace").hidden=!u;$("logout").hidden=!u;if(!u){role=null;profileForm.reset();$("loginRole").value="Identificado após entrar";return;}await loadProfile(u);});
+for(const uf of "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split(" ")){const option=document.createElement("option");option.value=uf;option.textContent=uf;$("profileUF").append(option);}
+const profileFields=["responsavel","empresa","documento","telefone","emergenciaNome","emergenciaTelefone","cep","uf","cidade","bairro","logradouro","numero","complemento","grupoWhatsapp","observacoes"];
+const profileForm=$("profileForm");
+async function loadProfessionalProfile(){
+ if(!user)return;
+ try{
+  const snap=await getDoc(doc(db,"professionalProfiles",user.uid));
+  const data=snap.exists()?snap.data():{};
+  for(const name of profileFields){const el=profileForm.elements.namedItem(name);if(el)el.value=data[name]??"";}
+  $("companyNameField").hidden=role!=="contratante";
+  $("documentLabel").querySelector("input").placeholder=role==="contratante"?"CNPJ (opcional)":"CPF (opcional)";
+  $("profileStatus").textContent=snap.exists()?"Perfil carregado.":"Complete seu perfil profissional.";
+ }catch(err){$("profileStatus").textContent="Erro ao carregar perfil: "+err.message;}
+}
+profileForm.addEventListener("submit",async e=>{
+ e.preventDefault();
+ if(!user||!role)return;
+ const data={};
+ for(const name of profileFields)data[name]=String(profileForm.elements.namedItem(name)?.value??"").trim();
+ if(data.grupoWhatsapp){
+  try{const url=new URL(data.grupoWhatsapp);if(url.protocol!=="https:"||url.hostname!=="chat.whatsapp.com")throw Error();}catch{$("profileStatus").textContent="Use um link válido de grupo: https://chat.whatsapp.com/...";return;}
+ }
+ if(!/^\d{10,13}$/.test(data.telefone.replace(/\D/g,""))){$("profileStatus").textContent="Informe um telefone com DDD válido.";return;}
+ try{
+  await setDoc(doc(db,"professionalProfiles",user.uid),{...data,ownerId:user.uid,role,updatedAt:serverTimestamp()},{merge:true});
+  $("profileStatus").textContent="Perfil profissional salvo com sucesso.";
+ }catch(err){$("profileStatus").textContent="Erro ao salvar perfil: "+err.message;}
+});
+
 document.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>{document.querySelectorAll(".view").forEach(v=>v.hidden=v.id!==b.dataset.view);document.querySelectorAll("[data-view]").forEach(x=>{x.classList.toggle("active",x===b);x.setAttribute("aria-current",String(x===b));});refresh()});
 $("freightForm").onsubmit=async e=>{e.preventDefault();if(role!=="contratante")return;try{let d=Object.fromEntries(new FormData(e.target));await addDoc(collection(db,"freights"),{...d,origemUF:stateFromLocation(d.origem),destinoUF:stateFromLocation(d.destino),peso:Number(d.peso),valor:d.valor?Number(d.valor):null,ownerId:user.uid,status:"aberto",createdAt:serverTimestamp()});e.target.reset();msg("Frete publicado.");await refresh();}catch(err){msg(err.message)}};
 const plateInput=$("vehiclePlate"),plateFeedback=$("plateFeedback");
@@ -23,7 +52,7 @@ function validPlate(value){return /^[A-Z]{3}[0-9]{4}$/.test(value)||/^[A-Z]{3}[0
 function checkPlate(){let raw=plateInput.value.replace(/[^A-Z0-9]/g,"");let ok=validPlate(raw);plateInput.setCustomValidity(ok?"":"Informe uma placa válida no formato ABC-1234 ou ABC1D23.");plateFeedback.textContent=ok?"Formato "+(/^[A-Z]{3}[0-9]{4}$/.test(raw)?"antigo":"Mercosul")+" reconhecido.":"Use o padrão antigo ABC-1234 ou Mercosul ABC1D23.";plateFeedback.classList.toggle("plate-valid",ok);return ok;}
 plateInput.addEventListener("input",()=>{plateInput.value=normalizePlate(plateInput.value);plateInput.setCustomValidity("");plateFeedback.textContent="Aceita placas antigas e Mercosul. A placa não será exibida nos anúncios.";plateFeedback.classList.remove("plate-valid");});
 plateInput.addEventListener("blur",checkPlate);
-$("vehicleForm").onsubmit=async e=>{e.preventDefault();if(role!=="prestador")return;if(!checkPlate()){plateInput.reportValidity();return;}try{let d=Object.fromEntries(new FormData(e.target));await addDoc(collection(db,"vehicles"),{...d,capacidade:Number(d.capacidade),ownerId:user.uid,createdAt:serverTimestamp()});e.target.reset();plateFeedback.textContent="Aceita placas antigas e Mercosul. A placa não será exibida nos anúncios.";plateFeedback.classList.remove("plate-valid");msg("Veículo cadastrado.");await refresh();}catch(err){msg(err.message)}};
+$("vehicleForm").onsubmit=async e=>{e.preventDefault();if(role!=="prestador")return;if(!checkPlate()){plateInput.reportValidity();return;}try{let d=Object.fromEntries(new FormData(e.target));for(const field of ["ano","comprimento","largura","altura"]){d[field]=d[field]?Number(d[field]):null;}await addDoc(collection(db,"vehicles"),{...d,capacidade:Number(d.capacidade),ownerId:user.uid,createdAt:serverTimestamp()});e.target.reset();plateFeedback.textContent="Aceita placas antigas e Mercosul. A placa não será exibida nos anúncios.";plateFeedback.classList.remove("plate-valid");msg("Veículo cadastrado.");await refresh();}catch(err){msg(err.message)}};
 const UFS=["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
 for(const id of ["filterOrigin","filterDestination"]){for(const uf of UFS){const opt=document.createElement("option");opt.value=uf;opt.textContent=uf;$(id).append(opt)}}
 let visibleFreights=10;

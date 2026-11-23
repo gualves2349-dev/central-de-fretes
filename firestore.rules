@@ -8,6 +8,24 @@ service cloud.firestore {
    allow read: if signed() && request.auth.uid == uid;
    allow update, delete: if false;
   }
+  match /professionalProfiles/{uid} {
+   allow read: if signed() && request.auth.uid == uid;
+   allow create: if signed() && request.auth.uid == uid
+    && request.resource.data.ownerId == uid
+    && request.resource.data.role == profile()
+    && request.resource.data.responsavel is string
+    && request.resource.data.telefone is string;
+   allow update: if signed() && request.auth.uid == uid
+    && resource.data.ownerId == uid
+    && request.resource.data.ownerId == uid
+    && request.resource.data.role == resource.data.role
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+     'responsavel','empresa','documento','telefone','emergenciaNome','emergenciaTelefone',
+     'cep','uf','cidade','bairro','logradouro','numero','complemento','grupoWhatsapp',
+     'observacoes','updatedAt'
+    ]);
+   allow delete: if false;
+  }
   match /vehicles/{id} {
    allow create: if signed() && profile() == 'prestador' && request.resource.data.ownerId == request.auth.uid && request.resource.data.capacidade > 0;
    allow read: if signed() && resource.data.ownerId == request.auth.uid;
