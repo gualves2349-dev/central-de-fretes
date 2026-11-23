@@ -110,7 +110,7 @@ profileForm.addEventListener("submit",async e=>{
 
 document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>document.querySelector(`[data-view="${b.dataset.go}"]`)?.click());
 document.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>{document.querySelectorAll(".view").forEach(v=>v.hidden=v.id!==b.dataset.view);document.querySelectorAll("[data-view]").forEach(x=>{x.classList.toggle("active",x===b);x.setAttribute("aria-current",x===b?"page":"false");});
-$("viewHeading").textContent=({inicio:"Visão geral",fretes:"Fretes disponíveis",publicar:"Publicar frete",veiculos:"Meus veículos",candidaturas:"Candidaturas",perfil:"Meu perfil"})[b.dataset.view]||"Central de Fretes";refresh()});
+$("viewHeading").textContent=({inicio:"Visão geral",fretes:"Fretes disponíveis",publicar:"Publicar frete",veiculos:"Meus veículos",candidaturas:"Candidaturas",perfil:"Meu perfil"})[b.dataset.view]||"SimpliFretes";refresh()});
 $("freightForm").onsubmit=async e=>{e.preventDefault();if(role!=="contratante"||!hasAccess())return;try{let d=Object.fromEntries(new FormData(e.target));await addDoc(collection(db,"freights"),{...d,origemUF:stateFromLocation(d.origem),destinoUF:stateFromLocation(d.destino),peso:Number(d.peso),valor:d.valor?Number(d.valor):null,ownerId:user.uid,status:"aberto",createdAt:serverTimestamp()});e.target.reset();msg("Frete publicado.");await refresh();}catch(err){msg(err.message)}};
 const plateInput=$("vehiclePlate"),plateFeedback=$("plateFeedback");
 function normalizePlate(value){let raw=value.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,7);return /^[A-Z]{3}[0-9]{4}$/.test(raw)?raw.slice(0,3)+"-"+raw.slice(3):raw;}
