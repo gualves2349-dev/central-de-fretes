@@ -2,20 +2,40 @@ rules_version = '2';
 service cloud.firestore {
  match /databases/{database}/documents {
   function signed() { return request.auth != null; }
+  function admin() { return signed() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+  function account() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+  function access() { return signed() && (admin() || (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (account().createdAt < timestamp.date(2026,11,23) || request.time < account().createdAt + duration.value(60,'m') || (exists(/databases/$(database)/documents/subscriptions/$(request.auth.uid)) && get(/databases/$(database)/documents/subscriptions/$(request.auth.uid)).data.expiresAt > request.time)))); }
   function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role; }
   match /users/{uid} {
-   allow create: if signed() && request.auth.uid == uid && request.resource.data.role in ['contratante','prestador'];
-   allow read: if signed() && request.auth.uid == uid;
+   allow create: if signed() && request.auth.uid == uid && request.resource.data.role in ['contratante','prestador'] && request.resource.data.createdAt == request.time && request.resource.data.email == request.auth.token.email && request.resource.data.keys().hasOnly(['email','role','createdAt']);
+   allow read: if signed() && (request.auth.uid == uid || admin());
    allow update, delete: if false;
   }
+  match /paymentSettings/{id} {
+   allow read: if signed() && id == 'pix';
+   allow create, update: if admin() && id == 'pix' && request.resource.data.key is string && request.resource.data.key.size() > 0 && request.resource.data.key.size() <= 200 && request.resource.data.updatedBy == request.auth.uid;
+   allow delete: if false;
+  }
+  match /admins/{uid} { allow read: if signed() && request.auth.uid == uid; allow write: if false; }
+  match /subscriptions/{uid} {
+   allow read: if signed() && (request.auth.uid == uid || admin());
+   allow create, update: if admin() && request.resource.data.userId == uid && request.resource.data.plan in ['mensal','anual'] && request.resource.data.status == 'ativa' && request.resource.data.expiresAt is timestamp && request.resource.data.approvedBy == request.auth.uid;
+   allow delete: if false;
+  }
+  match /paymentRequests/{id} {
+   allow create: if signed() && !admin() && request.resource.data.userId == request.auth.uid && request.resource.data.email == request.auth.token.email && request.resource.data.plan in ['mensal','anual'] && request.resource.data.amount == (request.resource.data.plan == 'mensal' ? 49 : 490) && request.resource.data.status == 'pendente' && request.resource.data.createdAt == request.time && request.resource.data.keys().hasOnly(['userId','email','role','plan','amount','status','createdAt']);
+   allow read: if signed() && (resource.data.userId == request.auth.uid || admin());
+   allow update: if admin() && resource.data.status == 'pendente' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','reviewedBy','reviewedAt','reason']) && request.resource.data.reviewedBy == request.auth.uid && request.resource.data.reviewedAt == request.time && request.resource.data.status in ['aprovado','recusado'] && (request.resource.data.status == 'aprovado' || (request.resource.data.reason is string && request.resource.data.reason.size() >= 5));
+   allow delete: if false;
+  }
   match /professionalProfiles/{uid} {
-   allow read: if signed() && request.auth.uid == uid;
-   allow create: if signed() && request.auth.uid == uid
+   allow read: if access() && request.auth.uid == uid;
+   allow create: if access() && request.auth.uid == uid
     && request.resource.data.ownerId == uid
     && request.resource.data.role == profile()
     && request.resource.data.responsavel is string
     && request.resource.data.telefone is string;
-   allow update: if signed() && request.auth.uid == uid
+   allow update: if access() && request.auth.uid == uid
     && resource.data.ownerId == uid
     && request.resource.data.ownerId == uid
     && request.resource.data.role == resource.data.role
@@ -27,14 +47,14 @@ service cloud.firestore {
    allow delete: if false;
   }
   match /vehicles/{id} {
-   allow create: if signed() && profile() == 'prestador' && request.resource.data.ownerId == request.auth.uid && request.resource.data.capacidade > 0;
-   allow read: if signed() && resource.data.ownerId == request.auth.uid;
+   allow create: if access() && profile() == 'prestador' && request.resource.data.ownerId == request.auth.uid && request.resource.data.capacidade > 0;
+   allow read: if access() && resource.data.ownerId == request.auth.uid;
    allow update, delete: if false;
   }
   match /freights/{id} {
-   allow read: if signed();
-   allow create: if signed() && profile() == 'contratante' && request.resource.data.ownerId == request.auth.uid && request.resource.data.status == 'aberto' && request.resource.data.peso > 0;
-   allow update: if signed() && profile() == 'contratante'
+   allow read: if access();
+   allow create: if access() && profile() == 'contratante' && request.resource.data.ownerId == request.auth.uid && request.resource.data.status == 'aberto' && request.resource.data.peso > 0;
+   allow update: if access() && profile() == 'contratante'
     && resource.data.ownerId == request.auth.uid
     && resource.data.status == 'aberto'
     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','acceptedApplicationId'])
@@ -44,7 +64,7 @@ service cloud.firestore {
     && get(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId)).data.freightId == id
     && get(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId)).data.ownerId == request.auth.uid
     && get(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId)).data.status == 'pendente';
-   allow update: if signed() && profile() == 'contratante'
+   allow update: if access() && profile() == 'contratante'
     && resource.data.ownerId == request.auth.uid
     && resource.data.status == 'aberto'
     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
@@ -52,7 +72,7 @@ service cloud.firestore {
    allow delete: if false;
   }
   match /applications/{id} {
-   allow create: if signed() && profile() == 'prestador'
+   allow create: if access() && profile() == 'prestador'
     && request.resource.data.applicantId == request.auth.uid
     && request.resource.data.status == 'pendente'
     && exists(/databases/$(database)/documents/freights/$(request.resource.data.freightId))
@@ -62,8 +82,8 @@ service cloud.firestore {
     && get(/databases/$(database)/documents/vehicles/$(request.resource.data.vehicleId)).data.capacidade >= get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.peso
     && (get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.carroceria == 'qualquer'
      || get(/databases/$(database)/documents/vehicles/$(request.resource.data.vehicleId)).data.carroceria == get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.carroceria);
-   allow read: if signed() && (resource.data.applicantId == request.auth.uid || resource.data.ownerId == request.auth.uid);
-   allow update: if signed() && profile() == 'contratante'
+   allow read: if access() && (resource.data.applicantId == request.auth.uid || resource.data.ownerId == request.auth.uid);
+   allow update: if access() && profile() == 'contratante'
     && resource.data.ownerId == request.auth.uid
     && resource.data.status == 'pendente'
     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','rejectionReason'])

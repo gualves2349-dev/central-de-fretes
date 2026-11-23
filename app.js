@@ -1,30 +1,40 @@
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {getAuth,onAuthStateChanged,createUserWithEmailAndPassword,signInWithEmailAndPassword,signOut} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import {getFirestore,doc,setDoc,getDoc,collection,addDoc,getDocs,query,where,updateDoc,runTransaction,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import {getFirestore,doc,setDoc,getDoc,collection,addDoc,getDocs,query,where,updateDoc,runTransaction,serverTimestamp,Timestamp,orderBy} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {firebaseConfig} from "./firebase-config.js";
 const $=id=>document.getElementById(id), msg=t=>$("message").textContent=t;
 if(firebaseConfig.apiKey==="COLE_AQUI") msg("Configure firebase-config.js para ativar o sistema.");
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app);
-let user=null,role=null;
+let user=null,role=null,accountCreatedAt=null,subscriptionEnd=null,isAdmin=false,accessTimer=null;
+const TRIAL_MS=60*60*1000, LEGACY_CUTOFF=Date.parse('2026-11-23T00:00:00-03:00');
+const pixKey=''; // CONFIGURE A CHAVE PIX NO PAINEL DO ADMIN, NÃO AQUI
+function accessExpires(){if(isAdmin)return Infinity;if(!accountCreatedAt)return 0;if(accountCreatedAt<LEGACY_CUTOFF)return Infinity;return Math.max(accountCreatedAt+TRIAL_MS,subscriptionEnd||0);}
+function hasAccess(){return !!user && Date.now()<accessExpires();}
+function formatTime(ms){const s=Math.max(0,Math.ceil(ms/1000));return `${String(Math.floor(s/3600)).padStart(2,'0')}:${String(Math.floor(s%3600/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;}
+function updateAccessUI(){if(!user)return;const allowed=hasAccess();$('workspace').hidden=!allowed||isAdmin;$('paywall').hidden=allowed||isAdmin;$('adminPanel').hidden=!isAdmin;$('logout').hidden=false;const label=$('trialLabel');label.hidden=isAdmin;if(allowed){label.textContent=accessExpires()===Infinity?'Acesso liberado':subscriptionEnd&&subscriptionEnd>Date.now()?'Assinatura ativa até '+new Date(subscriptionEnd).toLocaleDateString('pt-BR'):'Demo restante: '+formatTime(accessExpires()-Date.now());}else{label.textContent='Acesso expirado — escolha um plano';} }
+async function readSubscription(){subscriptionEnd=null;try{const snap=await getDoc(doc(db,'subscriptions',user.uid));if(snap.exists())subscriptionEnd=snap.data().expiresAt?.toMillis?.()||0;}catch(e){console.warn('Assinatura:',e.message);}updateAccessUI();}
+async function initAccess(u){clearInterval(accessTimer);isAdmin=false;accountCreatedAt=null;subscriptionEnd=null;const admin=await getDoc(doc(db,'admins',u.uid));if(admin.exists()){isAdmin=true;role='admin';updateHeaderIdentity('Administrador');updateAccessUI();await loadAdmin();await loadPixKey();return;}const p=await getDoc(doc(db,'users',u.uid));role=p.data()?.role;accountCreatedAt=p.data()?.createdAt?.toMillis?.()||null;if(!role){msg('Perfil ainda não encontrado. Se acabou de se cadastrar, aguarde alguns segundos e entre novamente.');return;}await readSubscription();await loadPixKey();accessTimer=setInterval(()=>{const before=$('workspace').hidden;updateAccessUI();if(!before&&$('workspace').hidden)msg('Seu período de demonstração terminou. Escolha um plano para continuar.');},1000);await loadProfile(u);updateAccessUI();}
+
 const safe=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let authMode="login";
 function setAuthMode(mode){authMode=mode;const registering=mode==="register";$("loginRoleBlock").hidden=registering;$("registerRoleBlock").hidden=!registering;$("authTitle").textContent=registering?"Crie sua conta":"Acesse sua conta";$("authHint").textContent=registering?"Escolha seu perfil. Essa escolha ficará vinculada à sua conta.":"Entre com seu e-mail e senha.";$("authSubmit").textContent=registering?"Criar conta":"Entrar";$("password").autocomplete=registering?"new-password":"current-password";for(const [id,active] of [["loginTab",!registering],["registerTab",registering]]){$(id).classList.toggle("active",active);$(id).setAttribute("aria-pressed",String(active));}msg("");}
 $("loginTab").onclick=()=>setAuthMode("login");
 $("registerTab").onclick=()=>setAuthMode("register");
-$("authForm").addEventListener("submit",async e=>{e.preventDefault();try{let email=$("email").value.trim(),password=$("password").value;if(authMode==="register"){let selected=document.querySelector('input[name="role"]:checked').value;let c=await createUserWithEmailAndPassword(auth,email,password);await setDoc(doc(db,"users",c.user.uid),{email,role:selected,createdAt:serverTimestamp()});role=selected;await loadProfile(c.user);}else await signInWithEmailAndPassword(auth,email,password);}catch(err){msg("Erro de acesso: "+err.message)}});
+$("authForm").addEventListener("submit",async e=>{e.preventDefault();try{let email=$("email").value.trim(),password=$("password").value;if(authMode==="register"){let selected=document.querySelector('input[name="role"]:checked').value;let c=await createUserWithEmailAndPassword(auth,email,password);await setDoc(doc(db,"users",c.user.uid),{email,role:selected,createdAt:serverTimestamp()});role=selected;await initAccess(c.user);}else await signInWithEmailAndPassword(auth,email,password);}catch(err){msg("Erro de acesso: "+err.message)}});
 $("logout").onclick=()=>signOut(auth);$("sideLogout").onclick=()=>signOut(auth);
 async function loadProfile(u){try{let p=await getDoc(doc(db,"users",u.uid));role=p.data()?.role;if(!role){msg("Perfil não encontrado. Verifique o cadastro no Firestore.");return;}$("loginRole").value=role==="prestador"?"Prestador de fretes":"Contratante";updateHeaderIdentity();document.querySelector('[data-view="publicar"]').hidden=role!=="contratante";document.querySelector('[data-view="veiculos"]').hidden=role!=="prestador";await loadProfessionalProfile();
 $("homePublish").hidden=role!=="contratante";
 document.querySelectorAll(".only-contractor").forEach(el=>el.hidden=role!=="contratante");
 document.querySelectorAll(".only-provider").forEach(el=>el.hidden=role!=="prestador");
 document.querySelector('[data-view="inicio"]').click();}catch(e){msg(e.message)}}
-onAuthStateChanged(auth,async u=>{user=u;$("auth").hidden=!!u;$("workspace").hidden=!u;$("logout").hidden=!u;if(!u){role=null;profileForm.reset();updateHeaderIdentity();$("loginRole").value="Identificado após entrar";return;}await loadProfile(u);});
+onAuthStateChanged(auth,async u=>{user=u;$('auth').hidden=!!u;$('workspace').hidden=true;$('paywall').hidden=true;$('adminPanel').hidden=true;$('logout').hidden=!u;clearInterval(accessTimer);if(!u){role=null;isAdmin=false;profileForm.reset();updateHeaderIdentity();$('trialLabel').hidden=true;$('loginRole').value='Identificado após entrar';return;}try{await initAccess(u);}catch(e){msg('Erro ao carregar acesso: '+e.message);}});
 for(const uf of "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split(" ")){const option=document.createElement("option");option.value=uf;option.textContent=uf;$("profileUF").append(option);}
 const profileFields=["responsavel","empresa","documento","telefone","emergenciaNome","emergenciaTelefone","cep","uf","cidade","bairro","logradouro","numero","complemento","grupoWhatsapp","observacoes"];
 const profileForm=$("profileForm");
 function updateHeaderIdentity(name=""){
  const el=$("headerIdentity");
  if(!user||!role){el.textContent="";el.hidden=true;return;}
+ if(isAdmin){el.textContent="Admin — "+user.email;el.hidden=false;return;}
  const kind=role==="contratante"?"Perfil Contratante":"Perfil Prestador";
  const fullName=String(name||profileForm.elements.namedItem("responsavel")?.value||"").trim();
  el.textContent=[kind,user.email,fullName].filter(Boolean).join(" — ");
@@ -85,7 +95,7 @@ cepField.addEventListener("blur",async()=>{
 
 profileForm.addEventListener("submit",async e=>{
  e.preventDefault();
- if(!user||!role)return;
+ if(!user||!role||!hasAccess())return;
  const data={};
  for(const name of profileFields)data[name]=String(profileForm.elements.namedItem(name)?.value??"").trim();
  if(data.grupoWhatsapp){
@@ -101,14 +111,14 @@ profileForm.addEventListener("submit",async e=>{
 document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>document.querySelector(`[data-view="${b.dataset.go}"]`)?.click());
 document.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>{document.querySelectorAll(".view").forEach(v=>v.hidden=v.id!==b.dataset.view);document.querySelectorAll("[data-view]").forEach(x=>{x.classList.toggle("active",x===b);x.setAttribute("aria-current",x===b?"page":"false");});
 $("viewHeading").textContent=({inicio:"Visão geral",fretes:"Fretes disponíveis",publicar:"Publicar frete",veiculos:"Meus veículos",candidaturas:"Candidaturas",perfil:"Meu perfil"})[b.dataset.view]||"Central de Fretes";refresh()});
-$("freightForm").onsubmit=async e=>{e.preventDefault();if(role!=="contratante")return;try{let d=Object.fromEntries(new FormData(e.target));await addDoc(collection(db,"freights"),{...d,origemUF:stateFromLocation(d.origem),destinoUF:stateFromLocation(d.destino),peso:Number(d.peso),valor:d.valor?Number(d.valor):null,ownerId:user.uid,status:"aberto",createdAt:serverTimestamp()});e.target.reset();msg("Frete publicado.");await refresh();}catch(err){msg(err.message)}};
+$("freightForm").onsubmit=async e=>{e.preventDefault();if(role!=="contratante"||!hasAccess())return;try{let d=Object.fromEntries(new FormData(e.target));await addDoc(collection(db,"freights"),{...d,origemUF:stateFromLocation(d.origem),destinoUF:stateFromLocation(d.destino),peso:Number(d.peso),valor:d.valor?Number(d.valor):null,ownerId:user.uid,status:"aberto",createdAt:serverTimestamp()});e.target.reset();msg("Frete publicado.");await refresh();}catch(err){msg(err.message)}};
 const plateInput=$("vehiclePlate"),plateFeedback=$("plateFeedback");
 function normalizePlate(value){let raw=value.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,7);return /^[A-Z]{3}[0-9]{4}$/.test(raw)?raw.slice(0,3)+"-"+raw.slice(3):raw;}
 function validPlate(value){return /^[A-Z]{3}[0-9]{4}$/.test(value)||/^[A-Z]{3}[0-9][A-Z][0-9]{2}$/.test(value);}
 function checkPlate(){let raw=plateInput.value.replace(/[^A-Z0-9]/g,"");let ok=validPlate(raw);plateInput.setCustomValidity(ok?"":"Informe uma placa válida no formato ABC-1234 ou ABC1D23.");plateFeedback.textContent=ok?"Formato "+(/^[A-Z]{3}[0-9]{4}$/.test(raw)?"antigo":"Mercosul")+" reconhecido.":"Use o padrão antigo ABC-1234 ou Mercosul ABC1D23.";plateFeedback.classList.toggle("plate-valid",ok);return ok;}
 plateInput.addEventListener("input",()=>{plateInput.value=normalizePlate(plateInput.value);plateInput.setCustomValidity("");plateFeedback.textContent="Aceita placas antigas e Mercosul. A placa não será exibida nos anúncios.";plateFeedback.classList.remove("plate-valid");});
 plateInput.addEventListener("blur",checkPlate);
-$("vehicleForm").onsubmit=async e=>{e.preventDefault();if(role!=="prestador")return;if(!checkPlate()){plateInput.reportValidity();return;}try{let d=Object.fromEntries(new FormData(e.target));for(const field of ["ano","comprimento","largura","altura"]){d[field]=d[field]?Number(d[field]):null;}await addDoc(collection(db,"vehicles"),{...d,capacidade:Number(d.capacidade),ownerId:user.uid,createdAt:serverTimestamp()});e.target.reset();plateFeedback.textContent="Aceita placas antigas e Mercosul. A placa não será exibida nos anúncios.";plateFeedback.classList.remove("plate-valid");msg("Veículo cadastrado.");await refresh();}catch(err){msg(err.message)}};
+$("vehicleForm").onsubmit=async e=>{e.preventDefault();if(role!=="prestador"||!hasAccess())return;if(!checkPlate()){plateInput.reportValidity();return;}try{let d=Object.fromEntries(new FormData(e.target));for(const field of ["ano","comprimento","largura","altura"]){d[field]=d[field]?Number(d[field]):null;}await addDoc(collection(db,"vehicles"),{...d,capacidade:Number(d.capacidade),ownerId:user.uid,createdAt:serverTimestamp()});e.target.reset();plateFeedback.textContent="Aceita placas antigas e Mercosul. A placa não será exibida nos anúncios.";plateFeedback.classList.remove("plate-valid");msg("Veículo cadastrado.");await refresh();}catch(err){msg(err.message)}};
 const UFS=["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
 for(const id of ["filterOrigin","filterDestination"]){for(const uf of UFS){const opt=document.createElement("option");opt.value=uf;opt.textContent=uf;$(id).append(opt)}}
 let visibleFreights=10;
@@ -119,7 +129,7 @@ $("searchFreights").onclick=()=>{visibleFreights=10;refresh()};
 $("clearFreightFilters").onclick=()=>{$("filterOrigin").value="";$("filterDestination").value="";$("filterBody").value="";$("filterStatus").value="novas";visibleFreights=10;refresh()};
 $("moreFreights").onclick=()=>{visibleFreights+=10;refresh()};
 
-async function refresh(){if(!user||!role)return;try{
+async function refresh(){if(!user||!role||!hasAccess())return;try{
 const apps=await getDocs(query(collection(db,"applications"),where(role==="contratante"?"ownerId":"applicantId","==",user.uid)));
 const ownApplications=new Map();
 if(role==="prestador")apps.forEach(a=>{const d=a.data();if(!ownApplications.has(d.freightId)||d.status==="aceita")ownApplications.set(d.freightId,d.status)});
@@ -200,3 +210,16 @@ $("applicationList").innerHTML="";apps.forEach(a=>{let d=a.data();if(d.applicant
 }catch(e){msg("Não foi possível atualizar: "+e.message)}};el.append(b)}}$("applicationList").append(el)});
 }catch(e){msg("Não foi possível carregar os dados: "+e.message)}}
 async function apply(id,d){try{let vehicles=await getDocs(query(collection(db,"vehicles"),where("ownerId","==",user.uid)));let eligible=vehicles.docs.filter(v=>v.data().capacidade>=d.peso&&(d.carroceria==="qualquer"||v.data().carroceria===d.carroceria));if(!eligible.length){msg("Cadastre um veículo com capacidade e carroceria compatíveis.");return;}let existing=await getDocs(query(collection(db,"applications"),where("freightId","==",id),where("applicantId","==",user.uid)));if(!existing.empty){msg("Você já se candidatou a este frete.");return;}await addDoc(collection(db,"applications"),{freightId:id,ownerId:d.ownerId,applicantId:user.uid,vehicleId:eligible[0].id,status:"pendente",createdAt:serverTimestamp()});msg("Candidatura enviada.");await refresh()}catch(e){msg(e.message)}}
+
+
+// Pagamento manual: solicitação não ativa assinatura; só a conta admin pode aprovar.
+let selectedPlan='mensal';
+document.querySelectorAll('[data-plan]').forEach(b=>b.addEventListener('click',()=>{selectedPlan=b.dataset.plan;document.querySelectorAll('[data-plan]').forEach(x=>x.classList.toggle('selected',x===b));$('paymentAmount').textContent=selectedPlan==='mensal'?'R$ 49,00':'R$ 490,00';}));
+$('requestPayment').onclick=async()=>{if(!user)return;const btn=$('requestPayment');btn.disabled=true;try{const snap=await getDocs(query(collection(db,'paymentRequests'),where('userId','==',user.uid)));if(snap.docs.some(x=>x.data().status==='pendente')){msg('Você já possui uma solicitação pendente. Aguarde a conferência.');return;}await addDoc(collection(db,'paymentRequests'),{userId:user.uid,email:user.email,role,plan:selectedPlan,amount:selectedPlan==='mensal'?49:490,status:'pendente',createdAt:serverTimestamp()});msg('Solicitação enviada. O administrador irá conferir o Pix no Itaú.');$('paymentNotice').textContent='Solicitação registrada. Aguarde a conferência do pagamento.';}catch(e){msg('Não foi possível solicitar: '+e.message);}finally{btn.disabled=false;}};
+$('refreshPayment').onclick=async()=>{await readSubscription();if(hasAccess())await loadProfile(user);else msg('Ainda não há assinatura ativa.');};
+$('adminRefresh').onclick=loadAdmin;
+async function loadAdmin(){if(!isAdmin)return;const list=$('adminRequests');list.replaceChildren();try{const snap=await getDocs(collection(db,'paymentRequests'));const pending=snap.docs.filter(d=>d.data().status==='pendente').sort((a,b)=>(a.data().createdAt?.seconds||0)-(b.data().createdAt?.seconds||0));$('pendingCount').textContent=pending.length;for(const entry of pending){const d=entry.data(),el=document.createElement('div');el.className='payment-request';const title=document.createElement('strong');title.textContent=d.email+' — '+(d.plan==='anual'?'Anual R$ 490':'Mensal R$ 49');const note=document.createElement('small');note.textContent='UID: '+d.userId+' · Solicitação: '+entry.id;const buttons=document.createElement('div');buttons.className='request-actions';for(const decision of ['aprovado','recusado']){const btn=document.createElement('button');btn.textContent=decision==='aprovado'?'Aprovar Pix':'Recusar';if(decision==='recusado')btn.className='secondary-btn';btn.onclick=async()=>{if(decision==='aprovado'&&!confirm('Você CONFERIU o crédito deste Pix no extrato do Itaú?'))return;const reason=decision==='recusado'?prompt('Motivo da recusa (mínimo 5 caracteres):'):'';if(decision==='recusado'&&(!reason||reason.trim().length<5))return;btn.disabled=true;try{const requestRef=doc(db,'paymentRequests',entry.id),subRef=doc(db,'subscriptions',d.userId);await runTransaction(db,async tx=>{const current=await tx.get(requestRef);if(!current.exists()||current.data().status!=='pendente')throw Error('Solicitação já processada.');let base=Date.now();if(decision==='aprovado'){const prev=await tx.get(subRef);const prior=prev.exists()?prev.data().expiresAt?.toMillis?.()||0:0;base=Math.max(base,prior);const expiry=new Date(base);if(d.plan==='anual')expiry.setFullYear(expiry.getFullYear()+1);else expiry.setDate(expiry.getDate()+30);tx.set(subRef,{userId:d.userId,plan:d.plan,status:'ativa',expiresAt:Timestamp.fromDate(expiry),approvedBy:user.uid,updatedAt:serverTimestamp()});}tx.update(requestRef,{status:decision,reviewedBy:user.uid,reviewedAt:serverTimestamp(),...(decision==='recusado'?{reason:reason.trim()}:{})});});msg(decision==='aprovado'?'Assinatura aprovada.':'Solicitação recusada.');await loadAdmin();}catch(e){msg('Erro: '+e.message);btn.disabled=false;}};buttons.append(btn);}el.append(title,note,buttons);list.append(el);}if(!pending.length)list.textContent='Nenhuma solicitação pendente.';}catch(e){msg('Erro ao carregar pagamentos: '+e.message);}}
+
+async function loadPixKey(){try{const snap=await getDoc(doc(db,'paymentSettings','pix'));const key=snap.exists()?String(snap.data().key||''):'';$('pixDisplay').textContent=key||'Consulte o administrador';if(isAdmin)$('adminPixKey').value=key;}catch(e){console.warn('Configuração Pix:',e.message);}}
+$('copyPix').onclick=async()=>{const key=$('pixDisplay').textContent;if(!key||key==='Consulte o administrador')return;try{await navigator.clipboard.writeText(key);msg('Chave Pix copiada.');}catch(e){msg('Selecione e copie a chave Pix exibida.');}};
+$('savePixKey').onclick=async()=>{if(!isAdmin)return;const key=$('adminPixKey').value.trim();if(!key){msg('Informe a chave Pix.');return;}try{await setDoc(doc(db,'paymentSettings','pix'),{key,updatedAt:serverTimestamp(),updatedBy:user.uid});await loadPixKey();msg('Chave Pix atualizada.');}catch(e){msg('Erro ao salvar Pix: '+e.message);}};
