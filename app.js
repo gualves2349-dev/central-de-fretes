@@ -62,13 +62,7 @@ function filteredFreightDocs(docs){const origin=$("filterOrigin").value,destinat
 $("searchFreights").onclick=()=>{visibleFreights=10;refresh()};
 $("clearFreightFilters").onclick=()=>{$("filterOrigin").value="";$("filterDestination").value="";$("filterBody").value="";$("filterStatus").value="novas";visibleFreights=10;refresh()};
 $("moreFreights").onclick=()=>{visibleFreights+=10;refresh()};
-$("fretebrasSearch").onclick=()=>{
- const from=$("filterOrigin").value,to=$("filterDestination").value;
- if(!from||!to){msg("Selecione a UF de origem e a UF de destino para pesquisar na Fretebras.");return;}
- const path=`https://www.fretebras.com.br/fretes/carga-de-${from.toLowerCase()}/carga-para-${to.toLowerCase()}`;
- window.open(path,"_blank","noopener,noreferrer");
-};
-$("externalSearch").onclick=()=>{const from=$("filterOrigin").value,to=$("filterDestination").value,body=$("filterBody").value;const terms=["frete carga disponivel",from?"origem "+from:"",to?"destino "+to:"",body?"carroceria "+body:""].filter(Boolean).join(" ");window.open("https://www.google.com/search?q="+encodeURIComponent(terms),"_blank","noopener,noreferrer");};
+
 async function refresh(){if(!user||!role)return;try{
 const apps=await getDocs(query(collection(db,"applications"),where(role==="contratante"?"ownerId":"applicantId","==",user.uid)));
 const ownApplications=new Map();
