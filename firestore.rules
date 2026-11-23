@@ -4,7 +4,7 @@ service cloud.firestore {
   function signed() { return request.auth != null; }
   function admin() { return signed() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
   function account() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
-  function access() { return signed() && (admin() || (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (account().createdAt < timestamp.date(2026,11,23) || request.time < account().createdAt + duration.value(60,'m') || (exists(/databases/$(database)/documents/subscriptions/$(request.auth.uid)) && get(/databases/$(database)/documents/subscriptions/$(request.auth.uid)).data.expiresAt > request.time)))); }
+  function access() { return signed() && (admin() || (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (account().createdAt < (timestamp.date(2026,11,23) + duration.value(3,'h')) || request.time < account().createdAt + duration.value(60,'m') || (exists(/databases/$(database)/documents/subscriptions/$(request.auth.uid)) && get(/databases/$(database)/documents/subscriptions/$(request.auth.uid)).data.expiresAt > request.time)))); }
   function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role; }
   match /users/{uid} {
    allow create: if signed() && request.auth.uid == uid && request.resource.data.role in ['contratante','prestador'] && request.resource.data.createdAt == request.time && request.resource.data.email == request.auth.token.email && request.resource.data.keys().hasOnly(['email','role','createdAt']);
