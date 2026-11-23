@@ -62,3 +62,6 @@ body:has(#workspace:not([hidden])) main{grid-column:1/-1;max-width:none;margin:0
 /* V7.1 ajustes */
 .header-identity{font-size:.8rem;color:#e0ecff;max-width:260px;overflow-wrap:anywhere;text-align:right}.header-account{margin-left:auto;flex-wrap:wrap;justify-content:flex-end}.danger-outline{background:#fff!important;color:#b42335!important;border:1px solid #e69ba5!important;margin-top:8px}.danger-outline:hover{background:#fff1f2!important}.danger-outline:disabled{opacity:.55;cursor:wait}.workspace-content .view>.section-head h3{font-size:1.15rem;margin:0}.workspace-content .view>.section-head{margin-bottom:14px}.workspace-content .view>.section-head p{margin-top:5px}
 @media(max-width:760px){.header-account{max-width:44%;gap:4px}.header-identity{font-size:.65rem}.header-account #headerRole{display:none}}
+
+/* V7.2: identidade única do usuário no cabeçalho */
+.header-identity{max-width:unset;font-size:.84rem;line-height:1.4;color:#e8f1ff}.header-account{gap:16px}@media(max-width:760px){.header-identity{font-size:.66rem;max-width:225px;text-align:right}.header-account{max-width:62%}}

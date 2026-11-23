@@ -13,15 +13,24 @@ $("loginTab").onclick=()=>setAuthMode("login");
 $("registerTab").onclick=()=>setAuthMode("register");
 $("authForm").addEventListener("submit",async e=>{e.preventDefault();try{let email=$("email").value.trim(),password=$("password").value;if(authMode==="register"){let selected=document.querySelector('input[name="role"]:checked').value;let c=await createUserWithEmailAndPassword(auth,email,password);await setDoc(doc(db,"users",c.user.uid),{email,role:selected,createdAt:serverTimestamp()});role=selected;await loadProfile(c.user);}else await signInWithEmailAndPassword(auth,email,password);}catch(err){msg("Erro de acesso: "+err.message)}});
 $("logout").onclick=()=>signOut(auth);$("sideLogout").onclick=()=>signOut(auth);
-async function loadProfile(u){try{let p=await getDoc(doc(db,"users",u.uid));role=p.data()?.role;if(!role){msg("Perfil não encontrado. Verifique o cadastro no Firestore.");return;}$("loginRole").value=role==="prestador"?"Prestador de fretes":"Contratante";$("headerIdentity").textContent=u.email+" · "+(role==="contratante"?"Contratante":"Prestador");$("headerIdentity").hidden=false;document.querySelector('[data-view="publicar"]').hidden=role!=="contratante";document.querySelector('[data-view="veiculos"]').hidden=role!=="prestador";await loadProfessionalProfile();$("headerRole").textContent=role==="contratante"?"Contratante":"Prestador";
+async function loadProfile(u){try{let p=await getDoc(doc(db,"users",u.uid));role=p.data()?.role;if(!role){msg("Perfil não encontrado. Verifique o cadastro no Firestore.");return;}$("loginRole").value=role==="prestador"?"Prestador de fretes":"Contratante";updateHeaderIdentity();document.querySelector('[data-view="publicar"]').hidden=role!=="contratante";document.querySelector('[data-view="veiculos"]').hidden=role!=="prestador";await loadProfessionalProfile();
 $("homePublish").hidden=role!=="contratante";
 document.querySelectorAll(".only-contractor").forEach(el=>el.hidden=role!=="contratante");
 document.querySelectorAll(".only-provider").forEach(el=>el.hidden=role!=="prestador");
 document.querySelector('[data-view="inicio"]').click();}catch(e){msg(e.message)}}
-onAuthStateChanged(auth,async u=>{user=u;$("auth").hidden=!!u;$("workspace").hidden=!u;$("logout").hidden=!u;if(!u){role=null;$("headerIdentity").hidden=true;profileForm.reset();$("loginRole").value="Identificado após entrar";return;}await loadProfile(u);});
+onAuthStateChanged(auth,async u=>{user=u;$("auth").hidden=!!u;$("workspace").hidden=!u;$("logout").hidden=!u;if(!u){role=null;profileForm.reset();updateHeaderIdentity();$("loginRole").value="Identificado após entrar";return;}await loadProfile(u);});
 for(const uf of "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split(" ")){const option=document.createElement("option");option.value=uf;option.textContent=uf;$("profileUF").append(option);}
 const profileFields=["responsavel","empresa","documento","telefone","emergenciaNome","emergenciaTelefone","cep","uf","cidade","bairro","logradouro","numero","complemento","grupoWhatsapp","observacoes"];
 const profileForm=$("profileForm");
+function updateHeaderIdentity(name=""){
+ const el=$("headerIdentity");
+ if(!user||!role){el.textContent="";el.hidden=true;return;}
+ const kind=role==="contratante"?"Perfil Contratante":"Perfil Prestador";
+ const fullName=String(name||profileForm.elements.namedItem("responsavel")?.value||"").trim();
+ el.textContent=[kind,user.email,fullName].filter(Boolean).join(" — ");
+ el.hidden=false;
+}
+
 async function loadProfessionalProfile(){
  if(!user)return;
  try{
@@ -30,8 +39,8 @@ async function loadProfessionalProfile(){
   for(const name of profileFields){const el=profileForm.elements.namedItem(name);if(el)el.value=["telefone","emergenciaTelefone"].includes(name)?phoneMask(data[name]??""):(data[name]??"");}
   $("companyNameField").hidden=role!=="contratante";
   $("documentLabel").querySelector("input").placeholder=role==="contratante"?"CNPJ (opcional)":"CPF (opcional)";
-  $("profileStatus").textContent=snap.exists()?"Perfil carregado.":"Complete seu perfil profissional.";
- }catch(err){$("profileStatus").textContent="Erro ao carregar perfil: "+err.message;}
+  updateHeaderIdentity(data.responsavel);$("profileStatus").textContent=snap.exists()?"Perfil carregado.":"Complete seu perfil profissional.";
+ }catch(err){updateHeaderIdentity();$("profileStatus").textContent="Erro ao carregar perfil: "+err.message;}
 }
 
 function phoneMask(value){
@@ -85,7 +94,7 @@ profileForm.addEventListener("submit",async e=>{
  if(!/^\d{10,13}$/.test(data.telefone.replace(/\D/g,""))){$("profileStatus").textContent="Informe um telefone com DDD válido.";return;}
  try{
   await setDoc(doc(db,"professionalProfiles",user.uid),{...data,ownerId:user.uid,role,updatedAt:serverTimestamp()},{merge:true});
-  $("profileStatus").textContent="Perfil profissional salvo com sucesso.";
+  updateHeaderIdentity(data.responsavel);$("profileStatus").textContent="Perfil profissional salvo com sucesso.";
  }catch(err){$("profileStatus").textContent="Erro ao salvar perfil: "+err.message;}
 });
 
