@@ -17,7 +17,8 @@ service cloud.firestore {
    allow read: if signed();
    allow create: if signed() && profile() == 'contratante' && request.resource.data.ownerId == request.auth.uid && request.resource.data.status == 'aberto' && request.resource.data.peso > 0;
    allow update: if signed() && profile() == 'contratante'
-    && resource.data.ownerId == request.auth.uid && resource.data.status == 'aberto'
+    && resource.data.ownerId == request.auth.uid
+    && resource.data.status == 'aberto'
     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','acceptedApplicationId'])
     && request.resource.data.status == 'fechado'
     && request.resource.data.acceptedApplicationId is string
@@ -43,15 +44,7 @@ service cloud.firestore {
     && resource.data.ownerId == request.auth.uid
     && resource.data.status == 'pendente'
     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
-    && (
-      (request.resource.data.status == 'recusada')
-      || (
-       request.resource.data.status == 'aceita'
-       && get(/databases/$(database)/documents/freights/$(resource.data.freightId)).data.status == 'aberto'
-       && getAfter(/databases/$(database)/documents/freights/$(resource.data.freightId)).data.status == 'fechado'
-       && getAfter(/databases/$(database)/documents/freights/$(resource.data.freightId)).data.acceptedApplicationId == id
-      )
-    );
+    && request.resource.data.status in ['aceita','recusada'];
    allow delete: if false;
   }
  }
