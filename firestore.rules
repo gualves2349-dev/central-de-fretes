@@ -24,8 +24,7 @@ service cloud.firestore {
     && exists(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId))
     && get(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId)).data.freightId == id
     && get(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId)).data.ownerId == request.auth.uid
-    && get(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId)).data.status == 'pendente'
-    && getAfter(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId)).data.status == 'aceita';
+    && get(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId)).data.status == 'pendente';
    allow delete: if false;
   }
   match /applications/{id} {
