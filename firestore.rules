@@ -43,8 +43,11 @@ service cloud.firestore {
    allow update: if signed() && profile() == 'contratante'
     && resource.data.ownerId == request.auth.uid
     && resource.data.status == 'pendente'
-    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
-    && request.resource.data.status in ['aceita','recusada'];
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','rejectionReason'])
+    && (
+      (request.resource.data.status == 'aceita' && !('rejectionReason' in request.resource.data))
+      || (request.resource.data.status == 'recusada' && request.resource.data.rejectionReason is string && request.resource.data.rejectionReason.size() >= 5 && request.resource.data.rejectionReason.size() <= 500)
+    );
    allow delete: if false;
   }
  }

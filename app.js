@@ -31,7 +31,7 @@ const normalizeText=s=>String(s??"").normalize("NFD").replace(/[\u0300-\u036f]/g
 const stateFromLocation=value=>{const text=normalizeText(value).trim();const match=text.match(/(?:^|[\s,\-/])([A-Z]{2})\s*$/);return match&&UFS.includes(match[1])?match[1]:"";};
 function filteredFreightDocs(docs){const origin=$("filterOrigin").value,destination=$("filterDestination").value,body=$("filterBody").value;return docs.filter(f=>{const d=f.data();const from=d.origemUF||stateFromLocation(d.origem),to=d.destinoUF||stateFromLocation(d.destino);return (!origin||from===origin)&&(!destination||to===destination)&&(!body||d.carroceria===body||d.carroceria==="qualquer");});}
 $("searchFreights").onclick=()=>{visibleFreights=10;refresh()};
-$("clearFreightFilters").onclick=()=>{$("filterOrigin").value="";$("filterDestination").value="";$("filterBody").value="";visibleFreights=10;refresh()};
+$("clearFreightFilters").onclick=()=>{$("filterOrigin").value="";$("filterDestination").value="";$("filterBody").value="";$("filterStatus").value="novas";visibleFreights=10;refresh()};
 $("moreFreights").onclick=()=>{visibleFreights+=10;refresh()};
 $("fretebrasSearch").onclick=()=>{
  const from=$("filterOrigin").value,to=$("filterDestination").value;
@@ -44,11 +44,38 @@ async function refresh(){if(!user||!role)return;try{
 const apps=await getDocs(query(collection(db,"applications"),where(role==="contratante"?"ownerId":"applicantId","==",user.uid)));
 const ownApplications=new Map();
 if(role==="prestador")apps.forEach(a=>{const d=a.data();if(!ownApplications.has(d.freightId)||d.status==="aceita")ownApplications.set(d.freightId,d.status)});
-let fs=await getDocs(query(collection(db,"freights"),where("status","==","aberto")));
-const matched=filteredFreightDocs(fs.docs);$("freightCount").textContent=matched.length+" frete(s) encontrado(s) na Central";$("moreFreights").hidden=matched.length<=visibleFreights;
-$("freightList").innerHTML="";if(!matched.length){const empty=document.createElement("p");empty.className="muted";empty.textContent="Nenhum frete cadastrado corresponde aos filtros. Experimente outras UFs ou consulte anúncios externos.";$("freightList").append(empty)}for(let f of matched.slice(0,visibleFreights)){let d=f.data(),el=document.createElement("div");el.className="item";el.innerHTML=`<b>${safe(d.origem)} → ${safe(d.destino)}</b><p>${safe(d.descricao)} · ${safe(d.peso)} kg · ${safe(d.carroceria)} · ${safe(d.data)}</p><p class="muted">${d.valor!=null?"R$ "+safe(d.valor):"Valor a negociar"}</p>`;if(role==="prestador"){let b=document.createElement("button");const status=ownApplications.get(f.id);b.textContent=status==="pendente"?"Aguardando aceite do contratante":status==="aceita"?"Candidatura aceita":status==="recusada"?"Candidatura recusada":"Candidatar-se";b.disabled=!!status;b.classList.toggle("awaiting",!!status);if(!status)b.onclick=async()=>{b.disabled=true;b.textContent="Enviando candidatura...";try{await apply(f.id,d)}finally{if(b.isConnected){b.disabled=false;b.textContent="Candidatar-se"}}};el.append(b)}$("freightList").append(el)}
+const statusFilter=$("filterStatus").value;
+const openSnapshot=await getDocs(query(collection(db,"freights"),where("status","==","aberto")));
+const openDocs=filteredFreightDocs(openSnapshot.docs);
+const display=[];
+if(statusFilter==="novas"||statusFilter==="todas")for(const freight of openDocs){const state=ownApplications.get(freight.id);if(statusFilter==="todas"||!state)display.push({freight,application:null,status:state||"novas"});}
+if(statusFilter!=="novas"){
+ const history=[];
+ apps.forEach(a=>{const data=a.data();if(statusFilter==="todas"||data.status===statusFilter)history.push({id:a.id,data});});
+ const missing=[...new Set(history.map(a=>a.data.freightId))].filter(id=>!openDocs.some(f=>f.id===id));
+ const extra=new Map();
+ await Promise.all(missing.map(async id=>{try{const snap=await getDoc(doc(db,"freights",id));if(snap.exists())extra.set(id,snap);}catch(_){}}));
+ for(const a of history){const freight=openDocs.find(f=>f.id===a.data.freightId)||extra.get(a.data.freightId);if(!freight)continue;if(!filteredFreightDocs([freight]).length)continue;display.push({freight,application:a.data,status:a.data.status});}
+}
+$("freightCount").textContent=display.length+" resultado(s) na Central";
+$("moreFreights").hidden=display.length<=visibleFreights;
+$("freightList").innerHTML="";
+if(!display.length){const empty=document.createElement("p");empty.className="muted";empty.textContent="Nenhum frete corresponde aos filtros e à situação selecionada.";$("freightList").append(empty)}
+for(const entry of display.slice(0,visibleFreights)){
+ const f=entry.freight,d=f.data(),status=entry.status,el=document.createElement("div");
+ el.className="item freight-status status-"+status;
+ const title=document.createElement("b");title.textContent=d.origem+" → "+d.destino;el.append(title);
+ const tag=document.createElement("span");tag.className="status-tag";tag.textContent=({novas:"Nova",pendente:"Aguardando aceite",aceita:"Aceita",recusada:"Recusada"})[status]||status;el.append(tag);
+ const detail=document.createElement("p");detail.textContent=[d.descricao,d.peso+" kg",d.carroceria,d.data].join(" · ");el.append(detail);
+ const price=document.createElement("p");price.className="muted";price.textContent=d.valor!=null?"R$ "+Number(d.valor).toLocaleString("pt-BR",{minimumFractionDigits:2}):"Valor a negociar";el.append(price);
+ if(status==="recusada"&&entry.application?.rejectionReason){const reason=document.createElement("p");reason.className="rejection-note";reason.textContent="Motivo da recusa: "+entry.application.rejectionReason;el.append(reason)}
+ if(role==="prestador"&&status==="novas"){
+ const b=document.createElement("button");b.textContent="Candidatar-se";b.onclick=async()=>{b.disabled=true;b.textContent="Enviando candidatura...";try{await apply(f.id,d)}finally{if(b.isConnected){b.disabled=false;b.textContent="Candidatar-se"}}};el.append(b);
+ }
+ $("freightList").append(el);
+}
 let vs=await getDocs(query(collection(db,"vehicles"),where("ownerId","==",user.uid)));$("vehicleList").innerHTML="";vs.forEach(v=>{let d=v.data(),el=document.createElement("p");el.textContent=`${d.modelo} — ${d.capacidade} kg — ${d.carroceria}`;$("vehicleList").append(el)});
-$("applicationList").innerHTML="";apps.forEach(a=>{let d=a.data();if(d.applicantId!==user.uid&&d.ownerId!==user.uid)return;let el=document.createElement("div");el.className="item";el.textContent=`Frete ${d.freightId} — ${d.status==="pendente"?"Aguardando aceite do contratante":d.status==="aceita"?"Aceita":d.status==="recusada"?"Recusada":d.status} — ${d.message||""}`;if(role==="contratante"&&d.ownerId===user.uid&&d.status==="pendente"){for(let status of ["aceita","recusada"]){let b=document.createElement("button");b.textContent=status==="aceita"?"Aceitar":"Recusar";b.onclick=async()=>{try{
+$("applicationList").innerHTML="";apps.forEach(a=>{let d=a.data();if(d.applicantId!==user.uid&&d.ownerId!==user.uid)return;let el=document.createElement("div");el.className="item";el.textContent=`Frete ${d.freightId} — ${d.status==="pendente"?"Aguardando aceite do contratante":d.status==="aceita"?"Aceita":d.status==="recusada"?"Recusada":d.status}${d.rejectionReason?" — Motivo: "+d.rejectionReason:""}`;el.classList.add("freight-status","status-"+d.status);if(role==="contratante"&&d.ownerId===user.uid&&d.status==="pendente"){for(let status of ["aceita","recusada"]){let b=document.createElement("button");b.textContent=status==="aceita"?"Aceitar":"Recusar";b.onclick=async()=>{try{
  if(status==="aceita"){
   await runTransaction(db,async tx=>{
    const freightRef=doc(db,"freights",d.freightId),appRef=doc(db,"applications",a.id);
@@ -60,8 +87,12 @@ $("applicationList").innerHTML="";apps.forEach(a=>{let d=a.data();if(d.applicant
   });
   msg("Candidatura aceita. O frete saiu da lista de disponíveis.");
  }else{
-  await updateDoc(doc(db,"applications",a.id),{status:"recusada"});
-  msg("Candidatura recusada.");
+  const reason=window.prompt("Informe o motivo da recusa (obrigatório, de 5 a 500 caracteres):","");
+  if(reason===null)return;
+  const cleaned=reason.trim();
+  if(cleaned.length<5||cleaned.length>500){msg("Informe um motivo entre 5 e 500 caracteres.");return;}
+  await updateDoc(doc(db,"applications",a.id),{status:"recusada",rejectionReason:cleaned});
+  msg("Candidatura recusada. O motivo ficará visível ao prestador.");
  }
  await refresh();
 }catch(e){msg("Não foi possível atualizar: "+e.message)}};el.append(b)}}$("applicationList").append(el)});
