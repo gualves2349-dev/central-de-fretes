@@ -1,6 +1,6 @@
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import {getAuth,onAuthStateChanged,createUserWithEmailAndPassword,signInWithEmailAndPassword,signOut} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import {getFirestore,doc,setDoc,getDoc,collection,addDoc,getDocs,query,where,updateDoc,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import {getFirestore,doc,setDoc,getDoc,collection,addDoc,getDocs,query,where,updateDoc,runTransaction,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import {firebaseConfig} from "./firebase-config.js";
 const $=id=>document.getElementById(id), msg=t=>$("message").textContent=t;
 if(firebaseConfig.apiKey==="COLE_AQUI") msg("Configure firebase-config.js para ativar o sistema.");
@@ -33,12 +33,34 @@ function filteredFreightDocs(docs){const origin=$("filterOrigin").value,destinat
 $("searchFreights").onclick=()=>{visibleFreights=10;refresh()};
 $("clearFreightFilters").onclick=()=>{$("filterOrigin").value="";$("filterDestination").value="";$("filterBody").value="";visibleFreights=10;refresh()};
 $("moreFreights").onclick=()=>{visibleFreights+=10;refresh()};
+$("fretebrasSearch").onclick=()=>{
+ const from=$("filterOrigin").value,to=$("filterDestination").value;
+ if(!from||!to){msg("Selecione a UF de origem e a UF de destino para pesquisar na Fretebras.");return;}
+ const path=`https://www.fretebras.com.br/fretes/carga-de-${from.toLowerCase()}/carga-para-${to.toLowerCase()}`;
+ window.open(path,"_blank","noopener,noreferrer");
+};
 $("externalSearch").onclick=()=>{const from=$("filterOrigin").value,to=$("filterDestination").value,body=$("filterBody").value;const terms=["frete carga disponivel",from?"origem "+from:"",to?"destino "+to:"",body?"carroceria "+body:""].filter(Boolean).join(" ");window.open("https://www.google.com/search?q="+encodeURIComponent(terms),"_blank","noopener,noreferrer");};
 async function refresh(){if(!user||!role)return;try{
 let fs=await getDocs(query(collection(db,"freights"),where("status","==","aberto")));
 const matched=filteredFreightDocs(fs.docs);$("freightCount").textContent=matched.length+" frete(s) encontrado(s) na Central";$("moreFreights").hidden=matched.length<=visibleFreights;
 $("freightList").innerHTML="";if(!matched.length){const empty=document.createElement("p");empty.className="muted";empty.textContent="Nenhum frete cadastrado corresponde aos filtros. Experimente outras UFs ou consulte anúncios externos.";$("freightList").append(empty)}for(let f of matched.slice(0,visibleFreights)){let d=f.data(),el=document.createElement("div");el.className="item";el.innerHTML=`<b>${safe(d.origem)} → ${safe(d.destino)}</b><p>${safe(d.descricao)} · ${safe(d.peso)} kg · ${safe(d.carroceria)} · ${safe(d.data)}</p><p class="muted">${d.valor!=null?"R$ "+safe(d.valor):"Valor a negociar"}</p>`;if(role==="prestador"){let b=document.createElement("button");b.textContent="Candidatar-se";b.onclick=()=>apply(f.id,d);el.append(b)}$("freightList").append(el)}
 let vs=await getDocs(query(collection(db,"vehicles"),where("ownerId","==",user.uid)));$("vehicleList").innerHTML="";vs.forEach(v=>{let d=v.data(),el=document.createElement("p");el.textContent=`${d.modelo} — ${d.capacidade} kg — ${d.carroceria}`;$("vehicleList").append(el)});
-let apps=await getDocs(query(collection(db,"applications"),where(role==="contratante"?"ownerId":"applicantId","==",user.uid)));$("applicationList").innerHTML="";apps.forEach(a=>{let d=a.data();if(d.applicantId!==user.uid&&d.ownerId!==user.uid)return;let el=document.createElement("div");el.className="item";el.textContent=`Frete ${d.freightId} — ${d.status} — ${d.message||""}`;if(role==="contratante"&&d.ownerId===user.uid&&d.status==="pendente"){for(let status of ["aceita","recusada"]){let b=document.createElement("button");b.textContent=status==="aceita"?"Aceitar":"Recusar";b.onclick=async()=>{try{await updateDoc(doc(db,"applications",a.id),{status});msg("Candidatura atualizada.");refresh()}catch(e){msg(e.message)}};el.append(b)}}$("applicationList").append(el)});
+let apps=await getDocs(query(collection(db,"applications"),where(role==="contratante"?"ownerId":"applicantId","==",user.uid)));$("applicationList").innerHTML="";apps.forEach(a=>{let d=a.data();if(d.applicantId!==user.uid&&d.ownerId!==user.uid)return;let el=document.createElement("div");el.className="item";el.textContent=`Frete ${d.freightId} — ${d.status} — ${d.message||""}`;if(role==="contratante"&&d.ownerId===user.uid&&d.status==="pendente"){for(let status of ["aceita","recusada"]){let b=document.createElement("button");b.textContent=status==="aceita"?"Aceitar":"Recusar";b.onclick=async()=>{try{
+ if(status==="aceita"){
+  await runTransaction(db,async tx=>{
+   const freightRef=doc(db,"freights",d.freightId),appRef=doc(db,"applications",a.id);
+   const freightSnap=await tx.get(freightRef),appSnap=await tx.get(appRef);
+   if(!freightSnap.exists()||freightSnap.data().status!=="aberto"||freightSnap.data().ownerId!==user.uid)throw new Error("Este frete já foi encerrado ou não está disponível.");
+   if(!appSnap.exists()||appSnap.data().status!=="pendente"||appSnap.data().ownerId!==user.uid)throw new Error("Esta candidatura não está mais pendente.");
+   tx.update(freightRef,{status:"fechado",acceptedApplicationId:a.id});
+   tx.update(appRef,{status:"aceita"});
+  });
+  msg("Candidatura aceita. O frete saiu da lista de disponíveis.");
+ }else{
+  await updateDoc(doc(db,"applications",a.id),{status:"recusada"});
+  msg("Candidatura recusada.");
+ }
+ await refresh();
+}catch(e){msg("Não foi possível atualizar: "+e.message)}};el.append(b)}}$("applicationList").append(el)});
 }catch(e){msg("Não foi possível carregar os dados: "+e.message)}}
 async function apply(id,d){try{let vehicles=await getDocs(query(collection(db,"vehicles"),where("ownerId","==",user.uid)));let eligible=vehicles.docs.filter(v=>v.data().capacidade>=d.peso&&(d.carroceria==="qualquer"||v.data().carroceria===d.carroceria));if(!eligible.length){msg("Cadastre um veículo com capacidade e carroceria compatíveis.");return;}let existing=await getDocs(query(collection(db,"applications"),where("freightId","==",id),where("applicantId","==",user.uid)));if(!existing.empty){msg("Você já se candidatou a este frete.");return;}await addDoc(collection(db,"applications"),{freightId:id,ownerId:d.ownerId,applicantId:user.uid,vehicleId:eligible[0].id,status:"pendente",createdAt:serverTimestamp()});msg("Candidatura enviada.");await refresh()}catch(e){msg(e.message)}}

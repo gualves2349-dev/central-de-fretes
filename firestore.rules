@@ -16,12 +16,43 @@ service cloud.firestore {
   match /freights/{id} {
    allow read: if signed();
    allow create: if signed() && profile() == 'contratante' && request.resource.data.ownerId == request.auth.uid && request.resource.data.status == 'aberto' && request.resource.data.peso > 0;
-   allow update, delete: if false;
+   allow update: if signed() && profile() == 'contratante'
+    && resource.data.ownerId == request.auth.uid && resource.data.status == 'aberto'
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','acceptedApplicationId'])
+    && request.resource.data.status == 'fechado'
+    && request.resource.data.acceptedApplicationId is string
+    && exists(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId))
+    && get(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId)).data.freightId == id
+    && get(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId)).data.ownerId == request.auth.uid
+    && get(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId)).data.status == 'pendente'
+    && getAfter(/databases/$(database)/documents/applications/$(request.resource.data.acceptedApplicationId)).data.status == 'aceita';
+   allow delete: if false;
   }
   match /applications/{id} {
-   allow create: if signed() && profile() == 'prestador' && request.resource.data.applicantId == request.auth.uid && request.resource.data.status == 'pendente' && exists(/databases/$(database)/documents/freights/$(request.resource.data.freightId)) && get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.ownerId == request.resource.data.ownerId && get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.status == 'aberto' && get(/databases/$(database)/documents/vehicles/$(request.resource.data.vehicleId)).data.ownerId == request.auth.uid && get(/databases/$(database)/documents/vehicles/$(request.resource.data.vehicleId)).data.capacidade >= get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.peso && (get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.carroceria == 'qualquer' || get(/databases/$(database)/documents/vehicles/$(request.resource.data.vehicleId)).data.carroceria == get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.carroceria);
+   allow create: if signed() && profile() == 'prestador'
+    && request.resource.data.applicantId == request.auth.uid
+    && request.resource.data.status == 'pendente'
+    && exists(/databases/$(database)/documents/freights/$(request.resource.data.freightId))
+    && get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.ownerId == request.resource.data.ownerId
+    && get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.status == 'aberto'
+    && get(/databases/$(database)/documents/vehicles/$(request.resource.data.vehicleId)).data.ownerId == request.auth.uid
+    && get(/databases/$(database)/documents/vehicles/$(request.resource.data.vehicleId)).data.capacidade >= get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.peso
+    && (get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.carroceria == 'qualquer'
+     || get(/databases/$(database)/documents/vehicles/$(request.resource.data.vehicleId)).data.carroceria == get(/databases/$(database)/documents/freights/$(request.resource.data.freightId)).data.carroceria);
    allow read: if signed() && (resource.data.applicantId == request.auth.uid || resource.data.ownerId == request.auth.uid);
-   allow update: if signed() && resource.data.ownerId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) && request.resource.data.status in ['aceita','recusada'] && resource.data.status == 'pendente';
+   allow update: if signed() && profile() == 'contratante'
+    && resource.data.ownerId == request.auth.uid
+    && resource.data.status == 'pendente'
+    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+    && (
+      (request.resource.data.status == 'recusada')
+      || (
+       request.resource.data.status == 'aceita'
+       && get(/databases/$(database)/documents/freights/$(resource.data.freightId)).data.status == 'aberto'
+       && getAfter(/databases/$(database)/documents/freights/$(resource.data.freightId)).data.status == 'fechado'
+       && getAfter(/databases/$(database)/documents/freights/$(resource.data.freightId)).data.acceptedApplicationId == id
+      )
+    );
    allow delete: if false;
   }
  }
